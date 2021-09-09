@@ -1,3 +1,4 @@
+# :warning: Don't use this package
 <p align="center">
     <img alt="Parse Server" src="https://github.com/parse-community/parse-server/raw/master/.github/parse-server-logo.png" width="500">
   </a>
