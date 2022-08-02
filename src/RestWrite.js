@@ -15,7 +15,8 @@ var ClientSDK = require('./ClientSDK');
 import RestQuery from './RestQuery';
 import _ from 'lodash';
 import logger from './logger';
-import { requiredColumnsForRead } from './Controllers/SchemaController';
+import Deprecator from './Deprecator/Deprecator';
+import { requiredColumns } from './Controllers/SchemaController';
 
 // query and data are both provided in REST API format. So data
 // types are encoded by plain old objects.
@@ -430,7 +431,14 @@ RestWrite.prototype.handleAuthDataValidation = function (authData) {
       return Promise.resolve();
     }
     const validateAuthData = this.config.authDataManager.getValidatorForProvider(provider);
-    if (!validateAuthData) {
+    const authProvider = (this.config.auth || {})[provider] || {};
+    if (authProvider.enabled == null) {
+      Deprecator.logRuntimeDeprecation({
+        usage: `auth.${provider}`,
+        solution: `auth.${provider}.enabled: true`,
+      });
+    }
+    if (!validateAuthData || authProvider.enabled === false) {
       throw new Parse.Error(
         Parse.Error.UNSUPPORTED_SERVICE,
         'This authentication method is unsupported.'
@@ -1318,6 +1326,9 @@ RestWrite.prototype.runDatabaseOperation = function () {
 
   if (this.className === '_Role') {
     this.config.cacheController.role.clear();
+    if (this.config.liveQueryController) {
+      this.config.liveQueryController.clearCachedRoles(this.auth.user);
+    }
   }
 
   if (this.className === '_User' && this.query && this.auth.isUnauthenticated()) {
@@ -1656,7 +1667,7 @@ RestWrite.prototype._updateResponseWithData = function (response, data) {
     'objectId',
     'createdAt',
     'updatedAt',
-    ...(requiredColumnsForRead[this.className] || []),
+    ...(requiredColumns.read[this.className] || []),
   ];
   for (const key in response) {
     if (skipKeys.includes(key)) {

@@ -150,14 +150,20 @@ const defaultColumns: { [string]: SchemaFields } = Object.freeze({
   },
 });
 
-const requiredColumnsForWrite = Object.freeze({
-  _Product: ['productIdentifier', 'icon', 'order', 'title', 'subtitle'],
-  _Role: ['name', 'ACL'],
+// fields required for read or write operations on their respective classes.
+const requiredColumns = Object.freeze({
+  read: {
+    _User: ['username'],
+  },
+  write: {
+    _Product: ['productIdentifier', 'icon', 'order', 'title', 'subtitle'],
+    _Role: ['name', 'ACL'],
+  },
 });
 
-const requiredColumnsForRead = Object.freeze({
-  _User: ['username'],
-});
+// const requiredColumnsForRead = Object.freeze({
+//   _User: ['username'],
+// });
 
 const invalidColumns = ['length'];
 
@@ -1273,7 +1279,7 @@ export default class SchemaController {
 
   // Validates that all the properties are set for the object
   validateRequiredColumns(className: string, object: any, query: any) {
-    const columns = requiredColumnsForWrite[className];
+    const columns = requiredColumns.write[className];
     if (!columns || columns.length == 0) {
       return Promise.resolve(this);
     }
@@ -1604,5 +1610,5 @@ export {
   convertSchemaToAdapterSchema,
   VolatileClassesSchemas,
   SchemaController,
-  requiredColumnsForRead,
+  requiredColumns,
 };
