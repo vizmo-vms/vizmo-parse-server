@@ -1225,6 +1225,26 @@ describe('ParseLiveQuery', function () {
     await object.save();
   });
 
+  fit('matchesKeyConstraints fails when subscribing a query with constraint notEqualTo null', async () => {
+    await reconfigureServer({
+      liveQuery: {
+        classNames: ['TestObject'],
+      },
+      startLiveQueryServer: true,
+      verbose: false,
+      silent: true,
+    });
+
+    const query = new Parse.Query('TestObject');
+    query.notEqualTo('foo', null);
+    await query.subscribe();
+
+    const object1 = new TestObject();
+    object1.set('foo', 'bar');
+
+    await object1.save();
+  });
+
   afterEach(async function (done) {
     const client = await Parse.CoreManager.getLiveQueryController().getDefaultLiveQueryClient();
     client.close();
