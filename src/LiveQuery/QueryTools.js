@@ -99,7 +99,12 @@ function contains(haystack: Array, needle: any): boolean {
       if (typeof ptr === 'string' && ptr === needle.objectId) {
         return true;
       }
-      if (ptr.className && ptr.className === needle.className && ptr.objectId === needle.objectId) {
+      if (
+        ptr &&
+        ptr.className &&
+        ptr.className === needle.className &&
+        ptr.objectId === needle.objectId
+      ) {
         return true;
       }
     }
