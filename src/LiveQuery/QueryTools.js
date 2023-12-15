@@ -99,7 +99,7 @@ function contains(haystack: Array, needle: any): boolean {
       if (typeof ptr === 'string' && ptr === needle.objectId) {
         return true;
       }
-      if (ptr.className === needle.className && ptr.objectId === needle.objectId) {
+      if (ptr.className && ptr.className === needle.className && ptr.objectId === needle.objectId) {
         return true;
       }
     }
@@ -224,7 +224,7 @@ function matchesKeyConstraints(object, key, constraints) {
   // More complex cases
   for (var condition in constraints) {
     compareTo = constraints[condition];
-    if (compareTo.__type) {
+    if (compareTo?.__type) {
       compareTo = Parse._decode(key, compareTo);
     }
     switch (condition) {
