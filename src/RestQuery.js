@@ -6,8 +6,6 @@ var Parse = require('parse/node').Parse;
 const triggers = require('./triggers');
 const { continueWhile } = require('parse/lib/node/promiseUtils');
 const AlwaysSelectedKeys = ['objectId', 'createdAt', 'updatedAt', 'ACL'];
-const { enforceRoleSecurity } = require('./SharedRest');
-
 // restOptions can include:
 //   skip
 //   limit
@@ -20,80 +18,7 @@ const { enforceRoleSecurity } = require('./SharedRest');
 //   readPreference
 //   includeReadPreference
 //   subqueryReadPreference
-/**
- * Use to perform a query on a class. It will run security checks and triggers.
- * @param options
- * @param options.method {RestQuery.Method} The type of query to perform
- * @param options.config {ParseServerConfiguration} The server configuration
- * @param options.auth {Auth} The auth object for the request
- * @param options.className {string} The name of the class to query
- * @param options.restWhere {object} The where object for the query
- * @param options.restOptions {object} The options object for the query
- * @param options.clientSDK {string} The client SDK that is performing the query
- * @param options.runAfterFind {boolean} Whether to run the afterFind trigger
- * @param options.runBeforeFind {boolean} Whether to run the beforeFind trigger
- * @param options.context {object} The context object for the query
- * @returns {Promise<_UnsafeRestQuery>} A promise that is resolved with the _UnsafeRestQuery object
- */
-async function RestQuery({
-  method,
-  config,
-  auth,
-  className,
-  restWhere = {},
-  restOptions = {},
-  clientSDK,
-  runAfterFind = true,
-  runBeforeFind = true,
-  context,
-}) {
-  if (![RestQuery.Method.find, RestQuery.Method.get].includes(method)) {
-    throw new Parse.Error(Parse.Error.INVALID_QUERY, 'bad query type');
-  }
-  enforceRoleSecurity(method, className, auth);
-  const result = runBeforeFind
-    ? await triggers.maybeRunQueryTrigger(
-      triggers.Types.beforeFind,
-      className,
-      restWhere,
-      restOptions,
-      config,
-      auth,
-      context,
-      method === RestQuery.Method.get
-    )
-    : Promise.resolve({ restWhere, restOptions });
-
-  return new _UnsafeRestQuery(
-    config,
-    auth,
-    className,
-    result.restWhere || restWhere,
-    result.restOptions || restOptions,
-    clientSDK,
-    runAfterFind,
-    context
-  );
-}
-
-RestQuery.Method = Object.freeze({
-  get: 'get',
-  find: 'find',
-});
-
-/**
- * _UnsafeRestQuery is meant for specific internal usage only. When you need to skip security checks or some triggers.
- * Don't use it if you don't know what you are doing.
- * @param config
- * @param auth
- * @param className
- * @param restWhere
- * @param restOptions
- * @param clientSDK
- * @param runAfterFind
- * @param context
- */
-function _UnsafeRestQuery(
+function RestQuery(
   config,
   auth,
   className,
@@ -272,7 +197,7 @@ function _UnsafeRestQuery(
 // Returns a promise for the response - an object with optional keys
 // 'results' and 'count'.
 // TODO: consolidate the replaceX functions
-_UnsafeRestQuery.prototype.execute = function (executeOptions) {
+RestQuery.prototype.execute = function (executeOptions) {
   return Promise.resolve()
     .then(() => {
       return this.buildRestWhere();
@@ -303,7 +228,7 @@ _UnsafeRestQuery.prototype.execute = function (executeOptions) {
     });
 };
 
-_UnsafeRestQuery.prototype.each = function (callback) {
+RestQuery.prototype.each = function (callback) {
   const { config, auth, className, restWhere, restOptions, clientSDK } = this;
   // if the limit is set, use it
   restOptions.limit = restOptions.limit || 100;
@@ -315,9 +240,7 @@ _UnsafeRestQuery.prototype.each = function (callback) {
       return !finished;
     },
     async () => {
-      // Safe here to use _UnsafeRestQuery because the security was already
-      // checked during "await RestQuery()"
-      const query = new _UnsafeRestQuery(
+      const query = new RestQuery(
         config,
         auth,
         className,
@@ -339,7 +262,7 @@ _UnsafeRestQuery.prototype.each = function (callback) {
   );
 };
 
-_UnsafeRestQuery.prototype.buildRestWhere = function () {
+RestQuery.prototype.buildRestWhere = function () {
   return Promise.resolve()
     .then(() => {
       return this.getUserAndRoleACL();
@@ -368,7 +291,7 @@ _UnsafeRestQuery.prototype.buildRestWhere = function () {
 };
 
 // Uses the Auth object to get the list of roles, adds the user id
-_UnsafeRestQuery.prototype.getUserAndRoleACL = function () {
+RestQuery.prototype.getUserAndRoleACL = function () {
   if (this.auth.isMaster) {
     return Promise.resolve();
   }
@@ -387,7 +310,7 @@ _UnsafeRestQuery.prototype.getUserAndRoleACL = function () {
 
 // Changes the className if redirectClassNameForKey is set.
 // Returns a promise.
-_UnsafeRestQuery.prototype.redirectClassNameForKey = function () {
+RestQuery.prototype.redirectClassNameForKey = function () {
   if (!this.redirectKey) {
     return Promise.resolve();
   }
@@ -402,7 +325,7 @@ _UnsafeRestQuery.prototype.redirectClassNameForKey = function () {
 };
 
 // Validates this operation against the allowClientClassCreation config.
-_UnsafeRestQuery.prototype.validateClientClassCreation = function () {
+RestQuery.prototype.validateClientClassCreation = function () {
   if (
     this.config.allowClientClassCreation === false &&
     !this.auth.isMaster &&
@@ -445,7 +368,7 @@ function transformInQuery(inQueryObject, className, results) {
 // $inQuery clause.
 // The $inQuery clause turns into an $in with values that are just
 // pointers to the objects returned in the subquery.
-_UnsafeRestQuery.prototype.replaceInQuery = async function () {
+RestQuery.prototype.replaceInQuery = function () {
   var inQueryObject = findObjectWithKey(this.restWhere, '$inQuery');
   if (!inQueryObject) {
     return;
@@ -468,14 +391,13 @@ _UnsafeRestQuery.prototype.replaceInQuery = async function () {
     additionalOptions.readPreference = this.restOptions.readPreference;
   }
 
-  const subquery = await RestQuery({
-    method: RestQuery.Method.find,
-    config: this.config,
-    auth: this.auth,
-    className: inQueryValue.className,
-    restWhere: inQueryValue.where,
-    restOptions: additionalOptions,
-  });
+  var subquery = new RestQuery(
+    this.config,
+    this.auth,
+    inQueryValue.className,
+    inQueryValue.where,
+    additionalOptions
+  );
   return subquery.execute().then(response => {
     transformInQuery(inQueryObject, subquery.className, response.results);
     // Recurse to repeat
@@ -504,7 +426,7 @@ function transformNotInQuery(notInQueryObject, className, results) {
 // $notInQuery clause.
 // The $notInQuery clause turns into a $nin with values that are just
 // pointers to the objects returned in the subquery.
-_UnsafeRestQuery.prototype.replaceNotInQuery = async function () {
+RestQuery.prototype.replaceNotInQuery = function () {
   var notInQueryObject = findObjectWithKey(this.restWhere, '$notInQuery');
   if (!notInQueryObject) {
     return;
@@ -527,15 +449,13 @@ _UnsafeRestQuery.prototype.replaceNotInQuery = async function () {
     additionalOptions.readPreference = this.restOptions.readPreference;
   }
 
-  const subquery = await RestQuery({
-    method: RestQuery.Method.find,
-    config: this.config,
-    auth: this.auth,
-    className: notInQueryValue.className,
-    restWhere: notInQueryValue.where,
-    restOptions: additionalOptions,
-  });
-
+  var subquery = new RestQuery(
+    this.config,
+    this.auth,
+    notInQueryValue.className,
+    notInQueryValue.where,
+    additionalOptions
+  );
   return subquery.execute().then(response => {
     transformNotInQuery(notInQueryObject, subquery.className, response.results);
     // Recurse to repeat
@@ -569,7 +489,7 @@ const transformSelect = (selectObject, key, objects) => {
 // The $select clause turns into an $in with values selected out of
 // the subquery.
 // Returns a possible-promise.
-_UnsafeRestQuery.prototype.replaceSelect = async function () {
+RestQuery.prototype.replaceSelect = function () {
   var selectObject = findObjectWithKey(this.restWhere, '$select');
   if (!selectObject) {
     return;
@@ -599,15 +519,13 @@ _UnsafeRestQuery.prototype.replaceSelect = async function () {
     additionalOptions.readPreference = this.restOptions.readPreference;
   }
 
-  const subquery = await RestQuery({
-    method: RestQuery.Method.find,
-    config: this.config,
-    auth: this.auth,
-    className: selectValue.query.className,
-    restWhere: selectValue.query.where,
-    restOptions: additionalOptions,
-  });
-
+  var subquery = new RestQuery(
+    this.config,
+    this.auth,
+    selectValue.query.className,
+    selectValue.query.where,
+    additionalOptions
+  );
   return subquery.execute().then(response => {
     transformSelect(selectObject, selectValue.key, response.results);
     // Keep replacing $select clauses
@@ -633,7 +551,7 @@ const transformDontSelect = (dontSelectObject, key, objects) => {
 // The $dontSelect clause turns into an $nin with values selected out of
 // the subquery.
 // Returns a possible-promise.
-_UnsafeRestQuery.prototype.replaceDontSelect = async function () {
+RestQuery.prototype.replaceDontSelect = function () {
   var dontSelectObject = findObjectWithKey(this.restWhere, '$dontSelect');
   if (!dontSelectObject) {
     return;
@@ -661,15 +579,13 @@ _UnsafeRestQuery.prototype.replaceDontSelect = async function () {
     additionalOptions.readPreference = this.restOptions.readPreference;
   }
 
-  const subquery = await RestQuery({
-    method: RestQuery.Method.find,
-    config: this.config,
-    auth: this.auth,
-    className: dontSelectValue.query.className,
-    restWhere: dontSelectValue.query.where,
-    restOptions: additionalOptions,
-  });
-
+  var subquery = new RestQuery(
+    this.config,
+    this.auth,
+    dontSelectValue.query.className,
+    dontSelectValue.query.where,
+    additionalOptions
+  );
   return subquery.execute().then(response => {
     transformDontSelect(dontSelectObject, dontSelectValue.key, response.results);
     // Keep replacing $dontSelect clauses
@@ -677,7 +593,7 @@ _UnsafeRestQuery.prototype.replaceDontSelect = async function () {
   });
 };
 
-_UnsafeRestQuery.prototype.cleanResultAuthData = function (result) {
+const cleanResultAuthData = function (result) {
   delete result.password;
   if (result.authData) {
     Object.keys(result.authData).forEach(provider => {
@@ -716,7 +632,7 @@ const replaceEqualityConstraint = constraint => {
   return constraint;
 };
 
-_UnsafeRestQuery.prototype.replaceEquality = function () {
+RestQuery.prototype.replaceEquality = function () {
   if (typeof this.restWhere !== 'object') {
     return;
   }
@@ -727,7 +643,7 @@ _UnsafeRestQuery.prototype.replaceEquality = function () {
 
 // Returns a promise for whether it was successful.
 // Populates this.response with an object that only has 'results'.
-_UnsafeRestQuery.prototype.runFind = function (options = {}) {
+RestQuery.prototype.runFind = function (options = {}) {
   if (this.findOptions.limit === 0) {
     this.response = { results: [] };
     return Promise.resolve();
@@ -746,7 +662,7 @@ _UnsafeRestQuery.prototype.runFind = function (options = {}) {
     .then(results => {
       if (this.className === '_User' && !findOptions.explain) {
         for (var result of results) {
-          this.cleanResultAuthData(result);
+          cleanResultAuthData(result);
         }
       }
 
@@ -763,7 +679,7 @@ _UnsafeRestQuery.prototype.runFind = function (options = {}) {
 
 // Returns a promise for whether it was successful.
 // Populates this.response.count with the count
-_UnsafeRestQuery.prototype.runCount = function () {
+RestQuery.prototype.runCount = function () {
   if (!this.doCount) {
     return;
   }
@@ -775,7 +691,7 @@ _UnsafeRestQuery.prototype.runCount = function () {
   });
 };
 
-_UnsafeRestQuery.prototype.denyProtectedFields = async function () {
+RestQuery.prototype.denyProtectedFields = async function () {
   if (this.auth.isMaster) {
     return;
   }
@@ -800,7 +716,7 @@ _UnsafeRestQuery.prototype.denyProtectedFields = async function () {
 };
 
 // Augments this.response with all pointers on an object
-_UnsafeRestQuery.prototype.handleIncludeAll = function () {
+RestQuery.prototype.handleIncludeAll = function () {
   if (!this.includeAll) {
     return;
   }
@@ -829,7 +745,7 @@ _UnsafeRestQuery.prototype.handleIncludeAll = function () {
 };
 
 // Updates property `this.keys` to contain all keys but the ones unselected.
-_UnsafeRestQuery.prototype.handleExcludeKeys = function () {
+RestQuery.prototype.handleExcludeKeys = function () {
   if (!this.excludeKeys) {
     return;
   }
@@ -847,7 +763,7 @@ _UnsafeRestQuery.prototype.handleExcludeKeys = function () {
 };
 
 // Augments this.response with data at the paths provided in this.include.
-_UnsafeRestQuery.prototype.handleInclude = function () {
+RestQuery.prototype.handleInclude = function () {
   if (this.include.length == 0) {
     return;
   }
@@ -874,7 +790,7 @@ _UnsafeRestQuery.prototype.handleInclude = function () {
 };
 
 //Returns a promise of a processed set of results
-_UnsafeRestQuery.prototype.runAfterFindTrigger = function () {
+RestQuery.prototype.runAfterFindTrigger = function () {
   if (!this.response) {
     return;
   }
@@ -994,7 +910,7 @@ function includePath(config, auth, response, path, restOptions = {}) {
     includeRestOptions.readPreference = restOptions.readPreference;
   }
 
-  const queryPromises = Object.keys(pointersHash).map(async className => {
+  const queryPromises = Object.keys(pointersHash).map(className => {
     const objectIds = Array.from(pointersHash[className]);
     let where;
     if (objectIds.length === 1) {
@@ -1002,14 +918,7 @@ function includePath(config, auth, response, path, restOptions = {}) {
     } else {
       where = { objectId: { $in: objectIds } };
     }
-    const query = await RestQuery({
-      method: objectIds.length === 1 ? RestQuery.Method.get : RestQuery.Method.find,
-      config,
-      auth,
-      className,
-      restWhere: where,
-      restOptions: includeRestOptions,
-    });
+    var query = new RestQuery(config, auth, className, where, includeRestOptions);
     return query.execute({ op: 'get' }).then(results => {
       results.className = className;
       return Promise.resolve(results);
@@ -1140,5 +1049,3 @@ function findObjectWithKey(root, key) {
 }
 
 module.exports = RestQuery;
-// For tests
-module.exports._UnsafeRestQuery = _UnsafeRestQuery;
